@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
+	pokeapi "github.com/roninii/pokedexcli/PokeAPI"
 )
 
 type cliCommand struct {
@@ -98,17 +100,6 @@ func commandHelp(config *Config) error {
 	return nil
 }
 
-type LocationAreaResponse struct {
-	Count    int            `json:"count"`
-	Next     string         `json:"next"`
-	Previous string         `json:"previous"`
-	Results  []LocationArea `json:"results"`
-}
-type LocationArea struct {
-	ID   int    `json:"id"`
-	Name string `json:"name"`
-}
-
 func commandMap(config *Config) error {
 	var url string
 	if config.Next != "" {
@@ -123,7 +114,7 @@ func commandMap(config *Config) error {
 	}
 
 	defer res.Body.Close()
-	var mapData LocationAreaResponse
+	var mapData pokeapi.Response
 	decoder := json.NewDecoder(res.Body)
 	err = decoder.Decode(&mapData)
 	if err != nil {
@@ -131,7 +122,9 @@ func commandMap(config *Config) error {
 	}
 
 	config.Next = mapData.Next
-	config.Previous = mapData.Previous
+	if mapData.Previous != nil {
+		config.Previous = *mapData.Previous
+	}
 	for _, location := range mapData.Results {
 		fmt.Println(location.Name)
 	}
@@ -150,7 +143,7 @@ func commandMapb(config *Config) error {
 	}
 
 	defer res.Body.Close()
-	var mapData LocationAreaResponse
+	var mapData pokeapi.Response
 	decoder := json.NewDecoder(res.Body)
 	err = decoder.Decode(&mapData)
 	if err != nil {
@@ -158,7 +151,12 @@ func commandMapb(config *Config) error {
 	}
 
 	config.Next = mapData.Next
-	config.Previous = mapData.Previous
+	if mapData.Previous != nil {
+		config.Previous = *mapData.Previous
+	} else {
+		// if Previous is nil, we are back at the beginning and should clear this out
+		config.Previous = ""
+	}
 	for _, location := range mapData.Results {
 		fmt.Println(location.Name)
 	}
