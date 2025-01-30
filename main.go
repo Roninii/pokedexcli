@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
-	pokeapi "github.com/roninii/pokedexcli/PokeAPI"
+	"github.com/roninii/pokedexcli/internal/pokeapi"
+	"github.com/roninii/pokedexcli/internal/pokecache"
 )
 
 type cliCommand struct {
@@ -23,8 +25,10 @@ type Config struct {
 }
 
 var commands map[string]cliCommand
+var cache pokecache.Cache
 
 func init() {
+	cache = pokecache.NewCache(5 * time.Second)
 	commands = map[string]cliCommand{
 		"exit": {
 			name:        "exit",
@@ -71,6 +75,13 @@ func main() {
 			fmt.Printf("Error executing command: %s; %v\n", command.name, err)
 		}
 
+		fmt.Printf("-- %d Values in Current Cache --\n", len(cache))
+		fmt.Println("URLs in cache:")
+		for k, _ := range cache {
+			fmt.Println(k)
+		}
+		fmt.Println("-------------------")
+
 	}
 }
 
@@ -108,26 +119,41 @@ func commandMap(config *Config) error {
 		url = "https://pokeapi.co/api/v2/location-area/"
 	}
 
-	res, err := http.Get(url)
-	if err != nil {
-		return fmt.Errorf("Error fetching map data: %v", err)
-	}
-
-	defer res.Body.Close()
 	var mapData pokeapi.Response
-	decoder := json.NewDecoder(res.Body)
-	err = decoder.Decode(&mapData)
-	if err != nil {
-		return fmt.Errorf("Error decoding map data: %v", err)
+
+	if val, exists := cache.Get(url); exists {
+		err := json.Unmarshal(val, &mapData)
+		if err != nil {
+			return fmt.Errorf("Error decoding map data: %v", err)
+		}
+	} else {
+		res, err := http.Get(url)
+		if err != nil {
+			return fmt.Errorf("Error fetching map data: %v", err)
+		}
+
+		defer res.Body.Close()
+
+		decoder := json.NewDecoder(res.Body)
+		err = decoder.Decode(&mapData)
+		if err != nil {
+			return fmt.Errorf("Error decoding map data: %v", err)
+		}
+
+		responseBytes, err := json.Marshal(mapData)
+		if err != nil {
+			fmt.Printf("Error adding response to cache: %v\n", err)
+		} else {
+			cache.Add(url, responseBytes)
+		}
 	}
 
 	config.Next = mapData.Next
 	if mapData.Previous != nil {
 		config.Previous = *mapData.Previous
 	}
-	for _, location := range mapData.Results {
-		fmt.Println(location.Name)
-	}
+
+	printEntries(mapData.Results)
 
 	return nil
 }
@@ -137,17 +163,33 @@ func commandMapb(config *Config) error {
 		return fmt.Errorf("Already at the beginning of the map!")
 	}
 
-	res, err := http.Get(config.Previous)
-	if err != nil {
-		return fmt.Errorf("Error fetching map data: %v", err)
-	}
-
-	defer res.Body.Close()
 	var mapData pokeapi.Response
-	decoder := json.NewDecoder(res.Body)
-	err = decoder.Decode(&mapData)
-	if err != nil {
-		return fmt.Errorf("Error decoding map data: %v", err)
+
+	if val, exists := cache.Get(config.Previous); exists {
+		err := json.Unmarshal(val, &mapData)
+		if err != nil {
+			return fmt.Errorf("Error decoding map data: %v", err)
+		}
+	} else {
+		res, err := http.Get(config.Previous)
+		if err != nil {
+			return fmt.Errorf("Error fetching map data: %v", err)
+		}
+
+		defer res.Body.Close()
+		decoder := json.NewDecoder(res.Body)
+		err = decoder.Decode(&mapData)
+		if err != nil {
+			return fmt.Errorf("Error decoding map data: %v", err)
+		}
+
+		responseBytes, err := json.Marshal(mapData)
+		if err != nil {
+			fmt.Printf("Error adding response to cache: %v\n", err)
+		} else {
+			cache.Add(config.Previous, responseBytes)
+		}
+
 	}
 
 	config.Next = mapData.Next
@@ -157,9 +199,14 @@ func commandMapb(config *Config) error {
 		// if Previous is nil, we are back at the beginning and should clear this out
 		config.Previous = ""
 	}
-	for _, location := range mapData.Results {
-		fmt.Println(location.Name)
-	}
+
+	printEntries(mapData.Results)
 
 	return nil
+}
+
+func printEntries(entries []pokeapi.Results) {
+	for _, location := range entries {
+		fmt.Println(location.Name)
+	}
 }
